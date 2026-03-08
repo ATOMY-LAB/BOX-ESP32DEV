@@ -1,10 +1,7 @@
-#include "modules/imu_module.h"
+#include "imu_module.h"
 
 bool IMUModule::begin() {
-  Wire.begin(IIC_SDA, IIC_SCL);
-  Wire.setClock(400000);
-  delay(500);
-  
+  // Wire已在 main.cpp 中初始化，此处跳过
   // 测试I2C通信
   int16_t test_val = readRegister(JY901_ADDR, AX_ADDR);
   Serial.print("[IMU] Init - Test read: ");
@@ -49,13 +46,23 @@ int16_t IMUModule::readRegister(uint8_t dev_addr, uint8_t reg_addr) {
   
   Wire.beginTransmission(dev_addr);
   Wire.write(reg_addr);
-  Wire.endTransmission(false);
+  byte error = Wire.endTransmission(false);
+  
+  // 检查传输错误
+  if (error != 0) {
+    Serial.print("[IMU] I2C transmission error: ");
+    Serial.println(error);
+    return 0;  // 返回哨兵值，表示错误
+  }
   
   Wire.requestFrom(dev_addr, (uint8_t)2);
   if (Wire.available() == 2) {
     buf[0] = Wire.read();
     buf[1] = Wire.read();
     data = (int16_t)((buf[1] << 8) | buf[0]);
+  } else {
+    Serial.println("[IMU] I2C read timeout or incomplete read");
+    return 0;
   }
   
   return data;

@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
 #include "sensors.h"
-#include "../config.h"
+#include "config.h"
 
 // ========================================
 // LoRa 无线通信模块

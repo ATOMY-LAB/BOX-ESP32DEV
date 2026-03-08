@@ -5,7 +5,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
 #include "sensors.h"
-#include "../config.h"
+#include "config.h"
 
 // ========================================
 // TFT 显示屏模块
@@ -100,32 +100,27 @@ private:
   void updateAcceleration(float ax, float ay, float az);
 
   /**
-   * @brief 更新角速度显示
-   * @param gx, gy, gz - 角速度值
+   * @brief 更新陀螺仪显示
    */
   void updateGyroscope(float gx, float gy, float gz);
 
   /**
    * @brief 更新欧拉角显示
-   * @param roll, pitch, yaw - 欧拉角值
    */
   void updateAttitude(float roll, float pitch, float yaw);
 
   /**
    * @brief 更新GPS显示
-   * @param gps_data - GPS数据
    */
   void updateGPS(const GPSData &gps_data);
 
   /**
-   * @brief 更新记录状态文本
-   * @param is_recording - 是否正在记录
+   * @brief 更新记录状态显示
    */
   void updateRecordingState(bool is_recording);
 
   /**
    * @brief 更新文件名显示
-   * @param filename - 文件名
    */
   void updateFileName(const String &filename);
 };

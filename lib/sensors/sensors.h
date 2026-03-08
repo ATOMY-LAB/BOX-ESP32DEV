@@ -48,7 +48,7 @@ struct GPSData {
 struct SystemState {
   bool is_recording;         // 是否正在记录到SD卡
   bool is_card_ready;        // SD卡是否就绪
-  bool is_gps_fixed;         // GPS是否定位
+  // GPS定位状态由 gps.isFixed() 单一源提供，避免重复
   bool is_tft_ready;         // TFT屏幕是否就绪
 };
 

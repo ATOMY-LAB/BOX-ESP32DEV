@@ -1,4 +1,4 @@
-#include "modules/tft_display.h"
+#include "tft_display.h"
 
 // 颜色定义
 #define BLACK   0x0000

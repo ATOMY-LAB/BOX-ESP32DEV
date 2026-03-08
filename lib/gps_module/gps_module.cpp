@@ -1,4 +1,4 @@
-#include "modules/gps_module.h"
+#include "gps_module.h"
 #include <math.h>
 
 bool GPSModule::begin() {
@@ -98,34 +98,32 @@ void GPSModule::wgs84ToGcj02(double wgs_lat, double wgs_lon,
   double dLon = transformLon(wgs_lon - 105.0, wgs_lat - 35.0);
   double radLat = wgs_lat / 180.0 * PI;
   double magic = sin(radLat);
-  magic = 1 - EARTH_ECCENTRICITY * magic * magic;
+  magic = 1 - 0.00669 * magic * magic;
   double sqrtMagic = sqrt(magic);
-  
-  dLat = (dLat * 180.0) / ((EARTH_RADIUS_A * (1 - EARTH_ECCENTRICITY)) / (magic * sqrtMagic) * PI);
-  dLon = (dLon * 180.0) / (EARTH_RADIUS_A / sqrtMagic * cos(radLat) * PI);
-  
+  dLat = (dLat * 180.0) / ((6370996.81 * (1 - 0.00669)) / (magic * sqrtMagic) * PI);
+  dLon = (dLon * 180.0) / (6370996.81 / sqrtMagic * cos(radLat) * PI);
   gcj_lat = wgs_lat + dLat;
   gcj_lon = wgs_lon + dLon;
 }
 
 bool GPSModule::outOfChina(double lat, double lon) {
-  if (lon < 72.004 || lon > 137.8347) return true;
-  if (lat < 0.8293 || lat > 55.8271) return true;
+  if (lon < 72.004 || lon > 137.8347 || lat < 0.8293 || lat > 55.8271)
+    return true;
   return false;
 }
 
 double GPSModule::transformLat(double x, double y) {
-  double ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * sqrt(fabs(x));
-  ret += (20.0 * sin(6.0 * x * PI) + 20.0 * sin(2.0 * x * PI)) * 2.0 / 3.0;
-  ret += (20.0 * sin(y * PI) + 40.0 * sin(y / 3.0 * PI)) * 2.0 / 3.0;
-  ret += (160.0 * sin(y / 12.0 * PI) + 320 * sin(y * PI / 30.0)) * 2.0 / 3.0;
+  double ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * sqrt(abs(x));
+  ret += ((20.0 * sin(6.0 * x * PI) + 20.0 * sin(2.0 * x * PI)) * 2.0 / 3.0);
+  ret += ((20.0 * sin(y * PI) + 40.0 * sin(y / 3.0 * PI)) * 2.0 / 3.0);
+  ret += ((160.0 * sin(y / 12.0 * PI) + 320 * sin(y * PI / 30.0)) * 2.0 / 3.0);
   return ret;
 }
 
 double GPSModule::transformLon(double x, double y) {
-  double ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * sqrt(fabs(x));
-  ret += (20.0 * sin(6.0 * x * PI) + 20.0 * sin(2.0 * x * PI)) * 2.0 / 3.0;
-  ret += (20.0 * sin(x * PI) + 40.0 * sin(x / 3.0 * PI)) * 2.0 / 3.0;
-  ret += (150.0 * sin(x / 12.0 * PI) + 300.0 * sin(x / 30.0 * PI)) * 2.0 / 3.0;
+  double ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * sqrt(abs(x));
+  ret += ((20.0 * sin(6.0 * x * PI) + 20.0 * sin(2.0 * x * PI)) * 2.0 / 3.0);
+  ret += ((20.0 * sin(x * PI) + 40.0 * sin(x / 3.0 * PI)) * 2.0 / 3.0);
+  ret += ((150.0 * sin(x / 12.0 * PI) + 300.0 * sin(x / 30.0 * PI)) * 2.0 / 3.0);
   return ret;
 }

@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "sensors.h"
-#include "../config.h"
+#include "config.h"
 
 // ========================================
 // IMU 传感器模块 - JY901

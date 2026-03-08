@@ -6,7 +6,7 @@
 #include <FS.h>
 #include <SD.h>
 #include "sensors.h"
-#include "../config.h"
+#include "config.h"
 
 // ========================================
 // SD 卡存储模块

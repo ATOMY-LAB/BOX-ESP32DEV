@@ -1,4 +1,4 @@
-#include "modules/sd_storage.h"
+#include "sd_storage.h"
 
 bool SDStorage::begin() {
   Serial.print("[SD] Init starting...");
@@ -74,11 +74,12 @@ bool SDStorage::isReady() const {
 
 String SDStorage::findNextFileName() {
   int fileIndex = 1;
-  String fileName;
+  char fileName[32];  // 固定缓冲区，避免频繁String分配
+  
   while (true) {
-    fileName = "/" + String(fileIndex) + ".csv";
-    if (!SD.exists(fileName.c_str())) {
-      return fileName;
+    snprintf(fileName, sizeof(fileName), "/%d.csv", fileIndex);
+    if (!SD.exists(fileName)) {
+      return String(fileName);
     }
     fileIndex++;
     if (fileIndex > 1000) return "/data.csv";
@@ -86,31 +87,28 @@ String SDStorage::findNextFileName() {
 }
 
 String SDStorage::formatCSVLine(const IMUData &imu_data, const GPSData &gps_data) {
-  String csvLine = "";
+  static char csvBuffer[256];  // 固定缓冲区，避免堆碎片
   
-  // IMU数据（必录）
-  csvLine += String(imu_data.timestamp) + ",";
-  csvLine += String(imu_data.ax, 2) + ",";
-  csvLine += String(imu_data.ay, 2) + ",";
-  csvLine += String(imu_data.az, 2) + ",";
-  csvLine += String(imu_data.gx, 2) + ",";
-  csvLine += String(imu_data.gy, 2) + ",";
-  csvLine += String(imu_data.gz, 2) + ",";
-  csvLine += String(imu_data.roll, 2) + ",";
-  csvLine += String(imu_data.pitch, 2) + ",";
-  csvLine += String(imu_data.yaw, 2) + ",";
-  
-  // GPS数据（无定位填NO_FIX）
   if (gps_data.is_fixed) {
-    csvLine += String(gps_data.wgs84_lat, 6) + ",";
-    csvLine += String(gps_data.wgs84_lon, 6) + ",";
-    csvLine += String(gps_data.gcj02_lat, 6) + ",";
-    csvLine += String(gps_data.gcj02_lon, 6) + ",";
-    csvLine += gps_data.lat_dir + ",";
-    csvLine += gps_data.lon_dir;
+    snprintf(csvBuffer, sizeof(csvBuffer),
+      "%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.8f,%.8f,%.8f,%.8f,%s,%s",
+      imu_data.timestamp,
+      imu_data.ax, imu_data.ay, imu_data.az,
+      imu_data.gx, imu_data.gy, imu_data.gz,
+      imu_data.roll, imu_data.pitch, imu_data.yaw,
+      gps_data.wgs84_lat, gps_data.wgs84_lon,
+      gps_data.gcj02_lat, gps_data.gcj02_lon,
+      gps_data.lat_dir.c_str(), gps_data.lon_dir.c_str()
+    );
   } else {
-    csvLine += "NO_FIX,NO_FIX,NO_FIX,NO_FIX,NO_FIX,NO_FIX";
+    snprintf(csvBuffer, sizeof(csvBuffer),
+      "%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,NO_FIX,NO_FIX,NO_FIX,NO_FIX,NO_FIX,NO_FIX",
+      imu_data.timestamp,
+      imu_data.ax, imu_data.ay, imu_data.az,
+      imu_data.gx, imu_data.gy, imu_data.gz,
+      imu_data.roll, imu_data.pitch, imu_data.yaw
+    );
   }
   
-  return csvLine;
+  return String(csvBuffer);
 }

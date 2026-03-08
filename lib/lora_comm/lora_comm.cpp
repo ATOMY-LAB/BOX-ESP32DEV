@@ -1,4 +1,4 @@
-#include "modules/lora_comm.h"
+#include "lora_comm.h"
 
 bool LoRaCommunication::begin() {
   LoRaSerial.begin(LORA_BAUD_RATE, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
@@ -22,25 +22,27 @@ void LoRaCommunication::processSerialData() {
 }
 
 void LoRaCommunication::sendData(const IMUData &imu_data, const GPSData &gps_data) {
-  String dataStr = "";
-  dataStr += "TS:" + String(imu_data.timestamp) + ",";
-  dataStr += "AX:" + String(imu_data.ax, 2) + ",";
-  dataStr += "AY:" + String(imu_data.ay, 2) + ",";
-  dataStr += "ROLL:" + String(imu_data.roll, 2) + ",";
-  dataStr += "PITCH:" + String(imu_data.pitch, 2) + ",";
+  static char loraBuffer[128];  // 固定缓冲区，避免堆碎片
   
   if (gps_data.is_fixed) {
-    dataStr += "LAT:" + String(gps_data.gcj02_lat, 6) + ",";
-    dataStr += "LON:" + String(gps_data.gcj02_lon, 6);
+    snprintf(loraBuffer, sizeof(loraBuffer),
+      "TS:%lu,AX:%.2f,AY:%.2f,ROLL:%.2f,PITCH:%.2f,LAT:%.6f,LON:%.6f\r\n",
+      imu_data.timestamp, imu_data.ax, imu_data.ay,
+      imu_data.roll, imu_data.pitch,
+      gps_data.gcj02_lat, gps_data.gcj02_lon
+    );
   } else {
-    dataStr += "LAT:NO_FIX,LON:NO_FIX";
+    snprintf(loraBuffer, sizeof(loraBuffer),
+      "TS:%lu,AX:%.2f,AY:%.2f,ROLL:%.2f,PITCH:%.2f,LAT:NO_FIX,LON:NO_FIX\r\n",
+      imu_data.timestamp, imu_data.ax, imu_data.ay,
+      imu_data.roll, imu_data.pitch
+    );
   }
   
-  dataStr += "\r\n";
-  LoRaSerial.print(dataStr);
+  LoRaSerial.print(loraBuffer);
   
   Serial.print("[LoRa Send] ");
-  Serial.print(dataStr);
+  Serial.print(loraBuffer);
 }
 
 void LoRaCommunication::setCommandCallback(LoRaCommandCallback callback) {
@@ -58,12 +60,6 @@ void LoRaCommunication::handleCommand(char cmd) {
   Serial.println(cmd);
   
   if (command_callback) {
-    command_callback(cmd);
-  }
-  
-  if (cmd == '1') {
-    Serial.println("[LoRa] Start recording (1)");
-  } else if (cmd == '2') {
-    Serial.println("[LoRa] Stop recording (2)");
+    command_callback(cmd);  // 所有命令处理逻辑委托给回调，避免重复
   }
 }

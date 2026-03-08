@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
 #include "sensors.h"
-#include "../config.h"
+#include "config.h"
 
 // ========================================
 // GPS 定位模块
@@ -98,19 +98,13 @@ private:
   /**
    * @brief 检查坐标是否在中国范围内
    * @param lat - 纬度
-   * @param lon - 经度
-   * @return true - 在中国范围外, false - 在中国范围内
    */
   bool outOfChina(double lat, double lon);
 
   /**
-   * @brief 纬度变换辅助函数
+   * @brief 坐标转换辅助函数
    */
   double transformLat(double x, double y);
-
-  /**
-   * @brief 经度变换辅助函数
-   */
   double transformLon(double x, double y);
 };
 

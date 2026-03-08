@@ -1,11 +1,11 @@
 #include <Arduino.h>
 #include "config.h"
-#include "modules/sensors.h"
-#include "modules/imu_module.h"
-#include "modules/gps_module.h"
-#include "modules/tft_display.h"
-#include "modules/sd_storage.h"
-#include "modules/lora_comm.h"
+#include "sensors.h"
+#include "imu_module.h"
+#include "gps_module.h"
+#include "tft_display.h"
+#include "sd_storage.h"
+#include "lora_comm.h"
 
 // ========================================
 // 龙舟桨频/船速采集盒子 - 主控程序
@@ -23,7 +23,7 @@ SDStorage sd_storage;
 LoRaCommunication lora;
 
 // 系统状态
-SystemState sys_state = {false, false, false, false};
+SystemState sys_state = {false, false, false};
 IMUData current_imu_data;
 GPSData current_gps_data;
 
@@ -82,15 +82,29 @@ void setup() {
   delay(500);
   Serial.println("[Init] I2C Bus OK");
 
-  // 初始化TFT显示屏
-  if (display.begin()) {
-    sys_state.is_tft_ready = true;
-    display.drawStaticUI();
-    display.showStartupMessage("Initializing...");
-    Serial.println("[Init] TFT Display OK");
-  } else {
-    Serial.println("[Init] TFT Display FAILED!");
-    while (1);  // 显示屏必须就绪
+  // 初始化TFT显示屏（支持重试机制）
+  int tft_retries = 3;
+  while (tft_retries > 0 && !sys_state.is_tft_ready) {
+    if (display.begin()) {
+      sys_state.is_tft_ready = true;
+      display.drawStaticUI();
+      display.showStartupMessage("Initializing...");
+      Serial.println("[Init] TFT Display OK");
+      break;
+    } else {
+      tft_retries--;
+      if (tft_retries > 0) {
+        Serial.print("[Init] TFT Display FAILED! Retrying... (");
+        Serial.print(tft_retries);
+        Serial.println(" retries left)");
+        delay(1000);
+      }
+    }
+  }
+  
+  if (!sys_state.is_tft_ready) {
+    Serial.println("[Init] WARNING: TFT Display unavailable. Continuing without display.");
+    Serial.println("       All data will be logged to SD card and LoRa transmission.");
   }
 
   // 初始化IMU
