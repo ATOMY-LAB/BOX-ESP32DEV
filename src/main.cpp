@@ -32,6 +32,7 @@ unsigned long lastIMURead = 0;
 unsigned long lastTFTRefresh = 0;
 unsigned long lastSDLog = 0;
 unsigned long lastLoRaSend = 0;
+unsigned long lastDiagCheck = 0;  // 诊断检查周期
 
 /**
  * @brief LoRa命令回调函数
@@ -200,6 +201,8 @@ void loop() {
     lora.sendData(current_imu_data, current_gps_data);
     lastLoRaSend = now;
   }
+
+  // 8. 诊断检查已禁用（不再定期输出SD卡状态）
 
   delay(5);  // CPU休息，防止看门狗超时
 }

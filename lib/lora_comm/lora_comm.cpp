@@ -13,29 +13,31 @@ void LoRaCommunication::processSerialData() {
     char loraData = LoRaSerial.read();
     if (loraData == '1' || loraData == '2') {
       handleCommand(loraData);
-    } else {
-      Serial.print("[LoRa] Invalid data: ");
-      Serial.write(loraData);
-      Serial.println();
     }
   }
 }
 
 void LoRaCommunication::sendData(const IMUData &imu_data, const GPSData &gps_data) {
-  static char loraBuffer[128];  // 固定缓冲区，避免堆碎片
+  static char loraBuffer[384];  // ✅ 增大缓冲区到384字节确保所有数据完整
   
   if (gps_data.is_fixed) {
+    // ✅ 使用固定宽度格式确保字符数量一致
     snprintf(loraBuffer, sizeof(loraBuffer),
-      "TS:%lu,AX:%.2f,AY:%.2f,ROLL:%.2f,PITCH:%.2f,LAT:%.6f,LON:%.6f\r\n",
-      imu_data.timestamp, imu_data.ax, imu_data.ay,
-      imu_data.roll, imu_data.pitch,
-      gps_data.gcj02_lat, gps_data.gcj02_lon
+      "TS:%10lu,AX:%7.2f,AY:%7.2f,AZ:%7.2f,GX:%7.2f,GY:%7.2f,GZ:%7.2f,ROLL:%7.2f,PITCH:%7.2f,YAW:%7.2f,LAT:%11.8f,LAT_DIR:%s,LON:%11.8f,LON_DIR:%s\r\n",
+      imu_data.timestamp,
+      imu_data.ax, imu_data.ay, imu_data.az,
+      imu_data.gx, imu_data.gy, imu_data.gz,
+      imu_data.roll, imu_data.pitch, imu_data.yaw,
+      gps_data.gcj02_lat, gps_data.lat_dir.c_str(),
+      gps_data.gcj02_lon, gps_data.lon_dir.c_str()
     );
   } else {
     snprintf(loraBuffer, sizeof(loraBuffer),
-      "TS:%lu,AX:%.2f,AY:%.2f,ROLL:%.2f,PITCH:%.2f,LAT:NO_FIX,LON:NO_FIX\r\n",
-      imu_data.timestamp, imu_data.ax, imu_data.ay,
-      imu_data.roll, imu_data.pitch
+      "TS:%10lu,AX:%7.2f,AY:%7.2f,AZ:%7.2f,GX:%7.2f,GY:%7.2f,GZ:%7.2f,ROLL:%7.2f,PITCH:%7.2f,YAW:%7.2f,LAT:   NO_FIX,LON:   NO_FIX\r\n",
+      imu_data.timestamp,
+      imu_data.ax, imu_data.ay, imu_data.az,
+      imu_data.gx, imu_data.gy, imu_data.gz,
+      imu_data.roll, imu_data.pitch, imu_data.yaw
     );
   }
   

@@ -18,10 +18,19 @@ bool SDStorage::begin() {
       File dataFile = SD.open(data_filename.c_str(), FILE_WRITE);
       if (dataFile) {
         if (dataFile.size() == 0) {
-          dataFile.println("Timestamp(ms),Ax(m/s2),Ay(m/s2),Az(m/s2),Gx(deg/s),Gy(deg/s),Gz(deg/s),"
+          size_t header_written = dataFile.println("Timestamp(ms),Ax(m/s2),Ay(m/s2),Az(m/s2),Gx(deg/s),Gy(deg/s),Gz(deg/s),"
                           "Roll(deg),Pitch(deg),Yaw(deg),WGS84_Lat(deg),WGS84_Lon(deg),"
                           "GCJ02_Lat(deg),GCJ02_Lon(deg),Lat_Dir,Lon_Dir");
-          Serial.println("[SD] CSV header written");
+          if (header_written == 0) {
+            Serial.println("[SD] ERROR: Header write failed!");
+            dataFile.close();
+            return false;
+          }
+          dataFile.flush();  // ✅ 确保表头写入SD卡
+          delay(10);  // 等待SD卡写入完成
+          Serial.print("[SD] CSV header written (");
+          Serial.print(header_written);
+          Serial.println(" bytes)");
         }
         dataFile.close();
         is_ready = true;
@@ -48,19 +57,34 @@ bool SDStorage::logData(const IMUData &imu_data, const GPSData &gps_data) {
     return false;
   }
 
-  File dataFile = SD.open(data_filename.c_str(), FILE_WRITE);
+  // ✅ 关键修复：使用FILE_APPEND确保追加而不是覆盖
+  File dataFile = SD.open(data_filename.c_str(), FILE_APPEND);
   if (!dataFile) {
-    Serial.println("[SD] File open failed!");
+    Serial.println("[SD] ERROR: File open failed!");
     return false;
   }
 
-  String csvLine = formatCSVLine(imu_data, gps_data);
-  dataFile.println(csvLine);
-  dataFile.close();
+  // 记录写入前的文件大小
+  size_t size_before = dataFile.size();
 
-  Serial.print("[SD] Log: ");
-  Serial.println(csvLine);
+  String csvLine = formatCSVLine(imu_data, gps_data);
+  size_t written = dataFile.println(csvLine);
   
+  if (written == 0) {
+    Serial.println("[SD] ERROR: println() returned 0 - write failed!");
+    dataFile.close();
+    return false;
+  }
+
+  // ✅ 关键步骤：flush确保数据写入SD卡
+  dataFile.flush();
+  delay(5);  // 等待写入完成
+  
+  // 验证写入
+  size_t size_after = dataFile.size();
+  dataFile.close();
+  
+  // 仅在出错时输出，正常只静默处理
   return true;
 }
 
@@ -111,4 +135,24 @@ String SDStorage::formatCSVLine(const IMUData &imu_data, const GPSData &gps_data
   }
   
   return String(csvBuffer);
+}
+
+void SDStorage::checkFileStatus() {
+  if (!is_ready) {
+    Serial.println("[SD] SD card not ready!");
+    return;
+  }
+  
+  File check = SD.open(data_filename.c_str());
+  if (check) {
+    Serial.print("[SD] File: ");
+    Serial.print(data_filename);
+    Serial.print(" | Size: ");
+    Serial.print(check.size());
+    Serial.println(" bytes");
+    check.close();
+  } else {
+    Serial.print("[SD] ERROR: Cannot open file ");
+    Serial.println(data_filename);
+  }
 }

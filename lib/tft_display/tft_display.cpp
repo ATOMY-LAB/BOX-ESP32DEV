@@ -26,22 +26,27 @@ void TFTDisplay::drawStaticUI() {
   busTake();
   tft.fillScreen(BLACK);
   
-  // 顶部标题栏
-  tft.fillRect(0, 0, 160, 18, BLUE);
+  // ✅ 新排版：紧凑布局，每行8像素，充分利用160x128屏幕
+  
+  // 顶部标题栏（0-15）
+  tft.fillRect(0, 0, 160, 16, BLUE);
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
   int titleX = (160 - 8 * 11) / 2;
   tft.setCursor(titleX, 4);
   tft.print("DragonBoat Box");
 
-  // 静态标签
-  tft.setTextColor(WHITE);
-  tft.setCursor(5, 25); tft.print("Acc:");
-  tft.setCursor(5, 40); tft.print("Gyro:");
-  tft.setCursor(5, 55); tft.print("Angle:");
-  tft.setCursor(5, 70); tft.print("GPS:");
-  tft.setCursor(5, 85); tft.print("State:");
-  tft.setCursor(5, 100); tft.print("File:");
+  // 数据区域静态标签（无需顶部标签，直接显示数据）
+  // 排版规划：
+  // 16-23: Acc
+  // 24-31: Gyro
+  // 32-39: Angle
+  // 40-47: GPS
+  // 48-55: State
+  // 56-63: File
+  // 64-127: 空白区域
+  
+  // 不再显示静态标签，数据直接显示，节省空间
 
   busRelease();
 }
@@ -100,59 +105,97 @@ void TFTDisplay::drawStatusLED(bool is_recording) {
 }
 
 void TFTDisplay::updateAcceleration(float ax, float ay, float az) {
-  tft.fillRect(30, 22, 125, 10, BLACK);
+  static char buf[50];
+  // ✅ 加速度：第1行显示X、Y，第2行显示Z
+  tft.fillRect(0, 16, 160, 12, BLACK);
   tft.setTextColor(RED);
   tft.setTextSize(1);
-  tft.setCursor(30, 27);
-  tft.print("X:"); tft.print(ax, 1);
-  tft.print(" Y:"); tft.print(ay, 1);
-  tft.print(" Z:"); tft.print(az, 1);
+  tft.setCursor(2, 18);
+  snprintf(buf, sizeof(buf), "Acc: X:%6.1f Y:%6.1f", ax, ay);
+  tft.print(buf);
+  
+  tft.fillRect(0, 28, 160, 12, BLACK);
+  tft.setCursor(2, 30);
+  snprintf(buf, sizeof(buf), "     Z:%6.1f", az);
+  tft.print(buf);
 }
 
 void TFTDisplay::updateGyroscope(float gx, float gy, float gz) {
-  tft.fillRect(30, 37, 125, 10, BLACK);
+  static char buf[50];
+  // ✅ 角速度：第1行显示X、Y，第2行显示Z
+  tft.fillRect(0, 40, 160, 12, BLACK);
   tft.setTextColor(GREEN);
-  tft.setCursor(30, 42);
-  tft.print("X:"); tft.print(gx, 1);
-  tft.print(" Y:"); tft.print(gy, 1);
-  tft.print(" Z:"); tft.print(gz, 1);
+  tft.setTextSize(1);
+  tft.setCursor(2, 42);
+  snprintf(buf, sizeof(buf), "Gyro: X:%6.1f Y:%6.1f", gx, gy);
+  tft.print(buf);
+  
+  tft.fillRect(0, 52, 160, 12, BLACK);
+  tft.setCursor(2, 54);
+  snprintf(buf, sizeof(buf), "      Z:%6.1f", gz);
+  tft.print(buf);
 }
 
 void TFTDisplay::updateAttitude(float roll, float pitch, float yaw) {
-  tft.fillRect(30, 52, 125, 10, BLACK);
+  static char buf[50];
+  // ✅ 欧拉角：第1行显示R、P，第2行显示Y
+  tft.fillRect(0, 64, 160, 12, BLACK);
   tft.setTextColor(YELLOW);
-  tft.setCursor(30, 57);
-  tft.print("R:"); tft.print(roll, 1);
-  tft.print(" P:"); tft.print(pitch, 1);
-  tft.print(" Y:"); tft.print(yaw, 1);
+  tft.setTextSize(1);
+  tft.setCursor(2, 66);
+  snprintf(buf, sizeof(buf), "Att: R:%6.1f P:%6.1f", roll, pitch);
+  tft.print(buf);
+  
+  tft.fillRect(0, 76, 160, 12, BLACK);
+  tft.setCursor(2, 78);
+  snprintf(buf, sizeof(buf), "     Y:%6.1f", yaw);
+  tft.print(buf);
 }
 
 void TFTDisplay::updateGPS(const GPSData &gps_data) {
-  tft.fillRect(30, 67, 125, 10, BLACK);
+  static char buf[60];
+  // ✅ GPS：第1行显示纬度，第2行显示经度
+  tft.fillRect(0, 88, 160, 12, BLACK);
   tft.setTextColor(ORANGE);
-  tft.setCursor(30, 72);
+  tft.setTextSize(1);
+  tft.setCursor(2, 90);
   if (gps_data.is_fixed) {
-    tft.print("L:"); tft.print(gps_data.gcj02_lat, 4);
-    tft.print(" Lo:"); tft.print(gps_data.gcj02_lon, 4);
+    snprintf(buf, sizeof(buf), "GPS Lat:%8.3f %c", gps_data.gcj02_lat, gps_data.lat_dir[0]);
+    tft.print(buf);
   } else {
-    tft.print("No Fix");
+    tft.print("GPS: No Fix");
+  }
+  
+  tft.fillRect(0, 100, 160, 12, BLACK);
+  tft.setCursor(2, 102);
+  if (gps_data.is_fixed) {
+    snprintf(buf, sizeof(buf), "    Lon:%8.3f %c", gps_data.gcj02_lon, gps_data.lon_dir[0]);
+    tft.print(buf);
+  } else {
+    tft.print("    --:-- --");
   }
 }
 
 void TFTDisplay::updateRecordingState(bool is_recording) {
-  tft.fillRect(30, 82, 125, 10, BLACK);
+  static char buf[100];
+  // ✅ 清除整行（0-159）
+  tft.fillRect(0, 112, 160, 12, BLACK);
+  
+  // ✅ 状态部分（前半部分，青色）
   tft.setTextColor(CYAN);
-  tft.setCursor(30, 87);
+  tft.setTextSize(1);
+  tft.setCursor(2, 114);
   if (is_recording) {
-    tft.print("Recording (ON)");
+    tft.print("Status: [REC]");
   } else {
-    tft.print("Stopped (OFF)");
+    tft.print("Status: STOP");
   }
 }
 
 void TFTDisplay::updateFileName(const String &filename) {
-  tft.fillRect(30, 97, 125, 10, BLACK);
   tft.setTextColor(WHITE);
-  tft.setCursor(30, 102);
+  tft.setTextSize(1);
+  tft.setCursor(80, 114);  // ✅ 往左挪，距离状态部分更近
+  tft.print("File: ");
   tft.print(filename.substring(1));
 }

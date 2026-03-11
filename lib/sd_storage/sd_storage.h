@@ -67,6 +67,13 @@ public:
    */
   bool isReady() const;
 
+  /**
+   * @brief 检查当前日志文件大小
+   * 
+   * 用于诊断，打印文件状态信息到串口
+   */
+  void checkFileStatus();
+
 private:
   String data_filename;
   bool is_ready;
