@@ -33,14 +33,20 @@
 #define LORA_BAUD_RATE 9600
 
 // ====== 采集间隔参数 ======
-#define IMU_READ_INTERVAL 20      // IMU采集间隔(ms) → 50Hz
-#define TFT_REFRESH_INTERVAL 33   // TFT刷新间隔(ms) ~30fps
-#define SD_LOG_INTERVAL 20        // TF卡写入间隔(ms) → 50Hz (与IMU同步)
-#define SD_FLUSH_INTERVAL 1000    // SD卡flush间隔(ms)
-#define LORA_SEND_INTERVAL 500    // LoRa发送间隔(ms)
+#define IMU_READ_INTERVAL    20    // IMU采集间隔(ms) → 50Hz
+#define TFT_REFRESH_INTERVAL 42   // TFT刷新间隔(ms) ~24fps; 空闲窗口~32ms
+#define SD_LOG_INTERVAL      20   // RAM缓冲写入间隔(ms) → 50Hz (与IMU同步, 无SPI)
+#define SD_FLUSH_INTERVAL   200   // 数据预写SD间隔(ms) → 5Hz
+                                  // flushData(): csv_buf→FATFS内部缓冲, 通常0~5ms SPI
+#define SD_META_FLUSH_INTERVAL 5000 // FAT元数据更新间隔(ms) → 0.2Hz
+                                  // flush(): 更新FAT/目录项, 10~30ms SPI, 每5s一次不影响显示
+#define SD_CHECK_INTERVAL  1000   // SD卡热插拔检测间隔(ms)
+#define LORA_SEND_INTERVAL  500   // LoRa发送间隔(ms)
 
 // ====== SPI速度 ======
-#define TFT_SPI_FREQ  27000000
+// TFT: ST7735S写入上限40MHz; 帧数据40960B, @40MHz传输≈8ms(含overhead~10ms)
+// SD:  Class10卡25MHz; flushData()约750B→FATFS缓冲(0~5ms); flush()FAT更新(10~30ms)
+#define TFT_SPI_FREQ  40000000
 #define SD_SPI_FREQ   25000000
 
 // ====== 屏幕尺寸 ======
@@ -48,9 +54,17 @@
 #define TFT_HEIGHT 128
 
 // ====== FreeRTOS任务配置 ======
+// IMU任务: Core 1运行, 优先级2高于loopTask(1), 保证50Hz精确采样不被GPS/SD打断
+#define IMU_TASK_STACK   3072
+#define IMU_TASK_PRIO    2
+#define IMU_TASK_CORE    1
+// 显示任务: Core 0运行, 24fps
 #define DISPLAY_TASK_STACK  8192
 #define DISPLAY_TASK_PRIO   1
-#define DISPLAY_TASK_CORE   0      // 显示任务运行在Core 0
+#define DISPLAY_TASK_CORE   0
+// spiMutex超时: 取帧周期42ms - 帧push时间10ms - 调度余量4ms = 28ms
+// flushData()通常0~5ms → 超时充裕; flush()最多30ms → 偶发一帧丢弃(每5s一次,可接受)
+#define SPI_MUTEX_TIMEOUT_MS 25
 
 // ====== IMU (JY901) 寄存器地址 ======
 #define AX_ADDR 0x34

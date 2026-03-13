@@ -8,10 +8,15 @@
 #include "lora_comm.h"
 
 // ========================================
-// 龙舟桨频/船速采集盒子 - 主控程序 (双核架构)
+// 龙舟桨频/船速采集盒子 - 主控程序
 //
-// Core 0: TFT显示任务 (30fps, GFXcanvas16离屏渲染)
-// Core 1: 传感器采集 + SD存储 + LoRa通信 (Arduino主循环)
+// Core 0: displayTask — TFT 24fps (GFXcanvas16离屏渲染)
+// Core 1: imuTask    — IMU精确50Hz采样 (vTaskDelayUntil, 优先级2)
+//         loopTask   — GPS/LoRa/SD/热插拔 (Arduino loop, 优先级1)
+//
+// IMU与GPS/SD/LoRa任务分离是解决IMU数据抖动的根本手段:
+//   原因: loop()中GPS串口解析、mutex等待等随机延迟污染millis()轮询的采样时机
+//   修复: imuTask用vTaskDelayUntil精确调度, 高优先级抢占loop()保证50Hz到达时间
 // ========================================
 
 // 全局串口对象
@@ -40,10 +45,11 @@ static IMUData current_imu_data;
 static GPSData current_gps_data;
 static SystemState sys_state = {false, false, false};
 
-// 时间管理
-static unsigned long lastIMURead = 0;
-static unsigned long lastSDLog = 0;
-static unsigned long lastSDFlush = 0;
+// 时间管理 (loopTask用; imuTask使用vTaskDelayUntil,不需要millis)
+static unsigned long lastSDLog    = 0;
+static unsigned long lastSDFlush  = 0;   // flushData (5Hz)
+static unsigned long lastSDMeta   = 0;   // flush/FAT更新 (0.2Hz)
+static unsigned long lastSDCheck  = 0;
 static unsigned long lastLoRaSend = 0;
 
 // 录制状态切换检测 (用于停止时立即flush，确保断电安全)
@@ -64,7 +70,36 @@ void onLoRaCommand(char cmd) {
   }
 }
 
-// ====== 显示任务 (运行在Core 0, 30fps) ======
+// ====== IMU采集任务 (运行在Core 1, 精确50Hz) ======
+// 使用 vTaskDelayUntil 实现无漂移采样, 优先级2高于loopTask(1)
+// 即使 loopTask 正在处理GPS/LoRa/SD, imuTask 也能在20ms到期时准时抢占执行
+void imuTask(void *pvParameters) {
+  TickType_t lastWakeTime = xTaskGetTickCount();
+
+  while (true) {
+    // 1. 读取IMU原始数据 (I2C 400kHz, ~0.5ms)
+    imu.readData(current_imu_data);
+
+    // 2. 更新GPS快照 (gps.processSerialData()在loopTask中运行, getData()线程安全)
+    if (gps.isFixed()) {
+      current_gps_data = gps.getData();
+    }
+
+    // 3. 同步共享数据到显示任务 (Core 0 via dataMutex)
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      shared_imu_data     = current_imu_data;
+      shared_gps_data     = current_gps_data;
+      shared_sys_state    = sys_state;
+      shared_record_count = sd_storage.getRecordCount();
+      xSemaphoreGive(dataMutex);
+    }
+
+    // 4. 精确等待到下一个20ms周期 (无漂移)
+    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(IMU_READ_INTERVAL));
+  }
+}
+
+// ====== 显示任务 (运行在Core 0, 24fps) ======
 void displayTask(void *pvParameters) {
   TickType_t lastWakeTime = xTaskGetTickCount();
 
@@ -90,11 +125,14 @@ void displayTask(void *pvParameters) {
     display.renderFrame(localIMU, localGPS, localState, localFilename, localRecCount);
 
     // 3. SPI传输到屏幕 (需要SPI锁)
-    spiLock();
-    display.pushFrame();
-    spiUnlock();
+    // 超时 SPI_MUTEX_TIMEOUT_MS(25ms): flushData()通常0~5ms内完成,超时充裕
+    // flush()每5s一次最多30ms, 偶发超时时跳过本帧(每5s丢1帧,视觉可接受)
+    if (xSemaphoreTake(spiMutex, pdMS_TO_TICKS(SPI_MUTEX_TIMEOUT_MS)) == pdTRUE) {
+      display.pushFrame();
+      xSemaphoreGive(spiMutex);
+    }
 
-    // 4. 等待下一帧 (~33ms = 30fps)
+    // 4. 等待下一帧 (~42ms = 24fps)
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(TFT_REFRESH_INTERVAL));
   }
 }
@@ -159,7 +197,7 @@ void setup() {
   // 初始化SD卡
   if (sd_storage.begin()) {
     sys_state.is_card_ready = true;
-    Serial.println("[Init] SD Card OK (binary format)");
+    Serial.println("[Init] SD Card OK (CSV format, 8KB write buffer)");
   } else {
     Serial.println("[Init] SD Card FAILED!");
     if (sys_state.is_tft_ready) display.showError("SD Card Error");
@@ -179,6 +217,18 @@ void setup() {
   shared_filename = sd_storage.getFileName();
   xSemaphoreGive(dataMutex);
 
+  // 启动IMU采集任务 (Core 1, 优先级2, 确保50Hz精确采样)
+  xTaskCreatePinnedToCore(
+    imuTask,
+    "IMUTask",
+    IMU_TASK_STACK,
+    NULL,
+    IMU_TASK_PRIO,
+    NULL,
+    IMU_TASK_CORE
+  );
+  Serial.println("[Init] IMU task started on Core 1 (50Hz vTaskDelayUntil)");
+
   // 启动显示任务 (Core 0)
   if (sys_state.is_tft_ready) {
     xTaskCreatePinnedToCore(
@@ -190,63 +240,56 @@ void setup() {
       NULL,
       DISPLAY_TASK_CORE
     );
-    Serial.println("[Init] Display task started on Core 0 (30fps)");
+    Serial.println("[Init] Display task started on Core 0 (24fps)");
   }
 
   delay(500);
   Serial.println("\n===== System Ready =====");
-  Serial.println("Core 0: Display (30fps canvas)");
-  Serial.println("Core 1: Sensors@50Hz + SD@50Hz + LoRa@2Hz");
+  Serial.println("Core 0: displayTask  — 24fps canvas push");
+  Serial.println("Core 1: imuTask      — 50Hz vTaskDelayUntil (prio 2)");
+  Serial.println("Core 1: loopTask     — GPS/LoRa/SD/hotswap (prio 1)");
+  Serial.println("SD: logData@50Hz(RAM) flushData@5Hz(sector) flush@0.2Hz(FAT)");
   Serial.println("========================\n");
 }
 
-// ====== 主循环 (Core 1: 传感器 + SD + LoRa) ======
+// ====== 主循环 (Core 1 loopTask: GPS/LoRa/SD/热插拔) ======
+// IMU采集已移至独立的 imuTask (50Hz精确调度)
+// 本循环只处理串口数据流、SD写入、LoRa通信、热插拔检测
 void loop() {
   unsigned long now = millis();
 
-  // 1. 连续处理串口数据
+  // 1. 连续处理串口数据 (GPS NMEA解析, LoRa命令接收)
   lora.processSerialData();
   gps.processSerialData();
 
-  // 2. 采集IMU (50Hz = 20ms间隔)
-  if (now - lastIMURead >= IMU_READ_INTERVAL) {
-    imu.readData(current_imu_data);
-    lastIMURead = now;
-
-    // 更新GPS
-    if (gps.isFixed()) {
-      current_gps_data = gps.getData();
-    }
-
-    // 同步共享数据到显示任务
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(2)) == pdTRUE) {
-      shared_imu_data = current_imu_data;
-      shared_gps_data = current_gps_data;
-      shared_sys_state = sys_state;
-      shared_record_count = sd_storage.getRecordCount();
-      xSemaphoreGive(dataMutex);
-    }
-  }
-
-  // 3. SD卡写入 (50Hz，仅录制中)
+  // 2. SD卡写入 (50Hz，仅录制中) — logData()只写内存缓冲区，无需SPI锁
+  //    current_imu_data/current_gps_data 由imuTask在Core 1上更新, 同Core串行安全
   if (sys_state.is_recording && sys_state.is_card_ready &&
       (now - lastSDLog >= SD_LOG_INTERVAL)) {
-    spiLock();
     sd_storage.logData(current_imu_data, current_gps_data);
-    spiUnlock();
     lastSDLog = now;
   }
 
-  // 4. SD卡定期flush (1Hz) + 回写record_count到文件头 (断电保护)
+  // 3. SD数据预写 (5Hz) — csv_buf→FATFS内部扇区缓冲, 通常0~5ms SPI
   if (sys_state.is_recording && sys_state.is_card_ready &&
       (now - lastSDFlush >= SD_FLUSH_INTERVAL)) {
     spiLock();
-    sd_storage.flush();
+    sd_storage.flushData();
     spiUnlock();
     lastSDFlush = now;
   }
 
-  // 5. 录制停止时立即flush一次 (确保最后一批数据落盘)
+  // 4. SD元数据FAT更新 (0.2Hz) — FAT/目录项落盘, 10~30ms SPI, 每5s一次
+  //    这是 dataFile.flush() 调用的唯一时机, 降频后不再频繁抢占显示帧
+  if (sys_state.is_recording && sys_state.is_card_ready &&
+      (now - lastSDMeta >= SD_META_FLUSH_INTERVAL)) {
+    spiLock();
+    sd_storage.flush();
+    spiUnlock();
+    lastSDMeta = now;
+  }
+
+  // 5. 录制停止时立即完整flush (确保最后一批数据落盘)
   if (prev_recording && !sys_state.is_recording && sys_state.is_card_ready) {
     spiLock();
     sd_storage.flush();
@@ -259,5 +302,50 @@ void loop() {
   if (now - lastLoRaSend >= LORA_SEND_INTERVAL) {
     lora.sendData(current_imu_data, current_gps_data);
     lastLoRaSend = now;
+  }
+
+  // 7. SD卡热插拔检测 (1Hz)
+  if (now - lastSDCheck >= SD_CHECK_INTERVAL) {
+    lastSDCheck = now;
+
+    if (sys_state.is_card_ready) {
+      // --- 拔卡检测: 检查SD卡是否仍可访问 ---
+      spiLock();
+      bool still_present = (SD.cardType() != CARD_NONE);
+      spiUnlock();
+
+      if (!still_present) {
+        Serial.println("[SD] Card removed! Stopping recording.");
+        sys_state.is_recording  = false;
+        sys_state.is_card_ready = false;
+
+        spiLock();
+        sd_storage.onCardRemoved();   // 关闭文件, SD.end(), 清内存缓冲
+        spiUnlock();
+
+        // 同步状态到显示任务
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        shared_sys_state = sys_state;
+        shared_filename  = "";
+        xSemaphoreGive(dataMutex);
+      }
+
+    } else {
+      // --- 插卡检测: 尝试单次重新初始化 ---
+      spiLock();
+      bool ok = sd_storage.tryReinit();
+      spiUnlock();
+
+      if (ok) {
+        sys_state.is_card_ready = true;
+        // 插卡后不自动开始录制，需通过LoRa命令显式启动
+
+        // 同步状态到显示任务
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        shared_sys_state = sys_state;
+        shared_filename  = sd_storage.getFileName();
+        xSemaphoreGive(dataMutex);
+      }
+    }
   }
 }
