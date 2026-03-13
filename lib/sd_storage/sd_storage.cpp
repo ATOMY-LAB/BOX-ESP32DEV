@@ -2,38 +2,21 @@
 
 bool SDStorage::begin() {
   Serial.print("[SD] Init starting...");
-  
-  // ESP32 SD卡初始化 - 使用 SPI 模式
-  // 确保SD卡初始化成功（重试机制）
+
   for (int i = 0; i < 3; i++) {
-    // 对于 ESP32，使用简化的 SD.begin() 调用
-    // 也可以指定时钟频率：SD.begin(SD_CS, SPI, 4000000)
-    if (SD.begin(SD_CS, SPI, 25000000)) {
+    if (SD.begin(SD_CS, SPI, SD_SPI_FREQ)) {
       Serial.println("Success!");
       data_filename = findNextFileName();
       Serial.print("[SD] Log File: ");
       Serial.println(data_filename);
 
-      // 创建文件并写入表头
-      File dataFile = SD.open(data_filename.c_str(), FILE_WRITE);
+      // 打开文件并保持句柄 (避免每次写入时open/close)
+      dataFile = SD.open(data_filename.c_str(), FILE_WRITE);
       if (dataFile) {
-        if (dataFile.size() == 0) {
-          size_t header_written = dataFile.println("Timestamp(ms),Ax(m/s2),Ay(m/s2),Az(m/s2),Gx(deg/s),Gy(deg/s),Gz(deg/s),"
-                          "Roll(deg),Pitch(deg),Yaw(deg),WGS84_Lat(deg),WGS84_Lon(deg),"
-                          "GCJ02_Lat(deg),GCJ02_Lon(deg),Lat_Dir,Lon_Dir");
-          if (header_written == 0) {
-            Serial.println("[SD] ERROR: Header write failed!");
-            dataFile.close();
-            return false;
-          }
-          dataFile.flush();  // ✅ 确保表头写入SD卡
-          delay(10);  // 等待SD卡写入完成
-          Serial.print("[SD] CSV header written (");
-          Serial.print(header_written);
-          Serial.println(" bytes)");
-        }
-        dataFile.close();
+        writeHeader();
+        dataFile.flush();
         is_ready = true;
+        Serial.println("[SD] Binary header written (version=2, record_count protected)");
         return true;
       } else {
         Serial.println("[SD] Create file failed!");
@@ -41,51 +24,93 @@ bool SDStorage::begin() {
       }
     }
     delay(500);
-    if (i < 2) {
-      Serial.println("Retrying...");
-    }
+    if (i < 2) Serial.println("Retrying...");
   }
-  
+
   Serial.println("Failed after 3 retries!");
   is_ready = false;
   return false;
 }
 
+void SDStorage::writeHeader() {
+  BinaryFileHeader hdr;
+  memcpy(hdr.magic, "DBCB", 4);
+  hdr.version = 2;  // version=2: record_count字段有效
+  memset(hdr.reserved, 0, sizeof(hdr.reserved));
+  hdr.acc_scale   = IMU_ACC_SCALE;
+  hdr.gyro_scale  = IMU_GYRO_SCALE;
+  hdr.angle_scale = IMU_ANGLE_SCALE;
+  hdr.gps_scale   = GPS_FIXED_SCALE;
+  hdr.record_count = 0;
+  hdr.pad = 0;
+  dataFile.write((const uint8_t*)&hdr, sizeof(hdr));
+}
+
+// 将record_count定点回写到文件头（seekable），然后跳回文件末尾
+void SDStorage::updateHeaderCount() {
+  if (!dataFile) return;
+  dataFile.seek(HDR_RECORD_COUNT_OFFSET);
+  dataFile.write((const uint8_t*)&record_count, sizeof(record_count));
+  // 回到数据末尾，以便下次追加写入
+  uint32_t dataEnd = sizeof(BinaryFileHeader) + (uint32_t)record_count * sizeof(BinaryRecord);
+  dataFile.seek(dataEnd);
+}
+
 bool SDStorage::logData(const IMUData &imu_data, const GPSData &gps_data) {
-  if (!is_ready) {
-    Serial.println("[SD] SD card not ready!");
-    return false;
+  if (!is_ready || !dataFile) return false;
+
+  BinaryRecord rec;
+  rec.timestamp = (uint32_t)imu_data.timestamp;
+  rec.ax  = imu_data.raw_ax;
+  rec.ay  = imu_data.raw_ay;
+  rec.az  = imu_data.raw_az;
+  rec.gx  = imu_data.raw_gx;
+  rec.gy  = imu_data.raw_gy;
+  rec.gz  = imu_data.raw_gz;
+  rec.roll  = imu_data.raw_roll;
+  rec.pitch = imu_data.raw_pitch;
+  rec.yaw   = imu_data.raw_yaw;
+
+  if (gps_data.is_fixed) {
+    rec.lat  = (int32_t)(gps_data.gcj02_lat * GPS_FIXED_SCALE);
+    rec.lon  = (int32_t)(gps_data.gcj02_lon * GPS_FIXED_SCALE);
+    uint8_t flags = 0x01;
+    if (gps_data.lat_dir == 'S') flags |= 0x02;
+    if (gps_data.lon_dir == 'W') flags |= 0x04;
+    rec.flags = flags;
+  } else {
+    rec.lat   = INT32_MIN;
+    rec.lon   = INT32_MIN;
+    rec.flags = 0x00;
   }
+  rec.pad = 0;
 
-  // ✅ 关键修复：使用FILE_APPEND确保追加而不是覆盖
-  File dataFile = SD.open(data_filename.c_str(), FILE_APPEND);
-  if (!dataFile) {
-    Serial.println("[SD] ERROR: File open failed!");
-    return false;
+  size_t written = dataFile.write((const uint8_t*)&rec, sizeof(rec));
+  if (written == sizeof(rec)) {
+    record_count++;
+    return true;
   }
+  return false;
+}
 
-  // 记录写入前的文件大小
-  size_t size_before = dataFile.size();
-
-  String csvLine = formatCSVLine(imu_data, gps_data);
-  size_t written = dataFile.println(csvLine);
-  
-  if (written == 0) {
-    Serial.println("[SD] ERROR: println() returned 0 - write failed!");
-    dataFile.close();
-    return false;
-  }
-
-  // ✅ 关键步骤：flush确保数据写入SD卡
+void SDStorage::flush() {
+  if (!is_ready || !dataFile) return;
+  // 先flush确保所有数据块写入SD
   dataFile.flush();
-  delay(5);  // 等待写入完成
-  
-  // 验证写入
-  size_t size_after = dataFile.size();
+  // 再回写record_count到文件头 → 断电后可通过此字段定位有效记录范围
+  updateHeaderCount();
+  // updateHeaderCount会seek，flush再次确保头部更新落盘
+  dataFile.flush();
+}
+
+void SDStorage::stopRecording() {
+  if (!is_ready || !dataFile) return;
+  // 完整flush + 回写计数 + 关闭句柄 (目录项文件大小将被正确更新)
+  flush();
   dataFile.close();
-  
-  // 仅在出错时输出，正常只静默处理
-  return true;
+  is_ready = false;
+  Serial.printf("[SD] Recording stopped: %lu records in %s\n",
+                (unsigned long)record_count, data_filename.c_str());
 }
 
 const String& SDStorage::getFileName() const {
@@ -96,63 +121,20 @@ bool SDStorage::isReady() const {
   return is_ready;
 }
 
+uint32_t SDStorage::getRecordCount() const {
+  return record_count;
+}
+
 String SDStorage::findNextFileName() {
   int fileIndex = 1;
-  char fileName[32];  // 固定缓冲区，避免频繁String分配
-  
+  char fileName[32];
+
   while (true) {
-    snprintf(fileName, sizeof(fileName), "/%d.csv", fileIndex);
+    snprintf(fileName, sizeof(fileName), "/%d.bin", fileIndex);
     if (!SD.exists(fileName)) {
       return String(fileName);
     }
     fileIndex++;
-    if (fileIndex > 1000) return "/data.csv";
-  }
-}
-
-String SDStorage::formatCSVLine(const IMUData &imu_data, const GPSData &gps_data) {
-  static char csvBuffer[256];  // 固定缓冲区，避免堆碎片
-  
-  if (gps_data.is_fixed) {
-    snprintf(csvBuffer, sizeof(csvBuffer),
-      "%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.8f,%.8f,%.8f,%.8f,%s,%s",
-      imu_data.timestamp,
-      imu_data.ax, imu_data.ay, imu_data.az,
-      imu_data.gx, imu_data.gy, imu_data.gz,
-      imu_data.roll, imu_data.pitch, imu_data.yaw,
-      gps_data.wgs84_lat, gps_data.wgs84_lon,
-      gps_data.gcj02_lat, gps_data.gcj02_lon,
-      gps_data.lat_dir.c_str(), gps_data.lon_dir.c_str()
-    );
-  } else {
-    snprintf(csvBuffer, sizeof(csvBuffer),
-      "%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,NO_FIX,NO_FIX,NO_FIX,NO_FIX,NO_FIX,NO_FIX",
-      imu_data.timestamp,
-      imu_data.ax, imu_data.ay, imu_data.az,
-      imu_data.gx, imu_data.gy, imu_data.gz,
-      imu_data.roll, imu_data.pitch, imu_data.yaw
-    );
-  }
-  
-  return String(csvBuffer);
-}
-
-void SDStorage::checkFileStatus() {
-  if (!is_ready) {
-    Serial.println("[SD] SD card not ready!");
-    return;
-  }
-  
-  File check = SD.open(data_filename.c_str());
-  if (check) {
-    Serial.print("[SD] File: ");
-    Serial.print(data_filename);
-    Serial.print(" | Size: ");
-    Serial.print(check.size());
-    Serial.println(" bytes");
-    check.close();
-  } else {
-    Serial.print("[SD] ERROR: Cannot open file ");
-    Serial.println(data_filename);
+    if (fileIndex > 9999) return "/data.bin";
   }
 }

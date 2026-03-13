@@ -7,122 +7,67 @@
 #include "sensors.h"
 #include "config.h"
 
-// ========================================
-// TFT 显示屏模块
-// ========================================
+// ====== 新版UI布局 (160×128) ======
+//  Y= 0-12:  标题栏 (13px)
+//  Y=13:     分割线
+//  Y=14-21:  列标签 "X   Y   Z" (8px)
+//  Y=22-31:  ACC行 (10px)
+//  Y=32-41:  GYR行 (10px)
+//  Y=42-51:  ANG行 = R P Y顺序 (10px)
+//  Y=52:     分割线
+//  Y=53-91:  XYZ加速度曲线图 (39px, ≈10s @15fps采样)
+//  Y=92:     分割线
+//  Y=93-103: GPS行1 (11px)
+//  Y=104-114:GPS行2 (11px)
+//  Y=115:    分割线
+//  Y=116-127:状态栏 (12px)
 
-/**
- * @class TFTDisplay
- * @brief ST7735S TFT液晶屏显示类
- * 
- * 功能:
- * - 管理160x128 ST7735S TFT屏幕
- * - 实时显示IMU、GPS、系统状态信息
- * - SPI总线共享管理（与SD卡共用）
- * 
- * UI布局:
- * - 顶部: 标题栏 + 记录状态指示灯
- * - 中间: IMU数据 (加速度、角速度、欧拉角)
- * - 中下: GPS定位状态
- * - 底部: 记录状态 + 文件信息
- */
+// 曲线图采样点数 = 图表像素宽度 (153)，每2帧采样一次 ≈ 15Hz → ~10s数据
+static const uint16_t CHART_SAMPLES = 153;
+
 class TFTDisplay {
 public:
-  /**
-   * @brief 构造函数
-   */
   TFTDisplay();
-
-  /**
-   * @brief 初始化TFT屏幕
-   * @return true - 初始化成功, false - 初始化失败
-   */
   bool begin();
 
-  /**
-   * @brief 绘制静态界面框架
-   * 
-   * 包含: 标题栏、所有静态标签文字
-   * 应在系统启动时只调用一次
-   */
-  void drawStaticUI();
+  // 渲染一帧到canvas (纯内存操作，不涉及SPI)
+  void renderFrame(const IMUData &imu_data,
+                   const GPSData &gps_data,
+                   const SystemState &sys_state,
+                   const String &filename,
+                   uint32_t record_count);
 
-  /**
-   * @brief 更新动态数据显示（实时刷新）
-   * 
-   * @param imu_data - IMU传感器数据
-   * @param gps_data - GPS定位数据
-   * @param sys_state - 系统状态
-   * @param filename - 当前SD卡日志文件名
-   */
-  void updateDisplay(const IMUData &imu_data, 
-                    const GPSData &gps_data,
-                    const SystemState &sys_state,
-                    const String &filename);
+  // 将canvas推送到屏幕 (SPI传输，需要SPI互斥锁保护)
+  void pushFrame();
 
-  /**
-   * @brief 显示错误消息
-   * @param error_msg - 错误文本
-   */
-  void showError(const String &error_msg);
-
-  /**
-   * @brief 显示启动信息
-   * @param msg - 启动信息文本
-   */
-  void showStartupMessage(const String &msg);
+  // 启动/错误画面 (直接绘制到屏幕，仅在初始化阶段使用)
+  void showStartupScreen();
+  void showError(const char *error_msg);
 
 private:
   Adafruit_ST7735 tft;
+  GFXcanvas16 *canvas;           // 160x128 离屏缓冲区 (~40KB)
 
-  /**
-   * @brief SPI总线获取（CS拉低）
-   * 
-   * TFT和SD卡共用SPI总线，使用CS信号选择
-   */
-  void busTake();
+  // 曲线图环形缓冲区 (静态成员，避免栈溢出)
+  static float _chart_ax[CHART_SAMPLES];
+  static float _chart_ay[CHART_SAMPLES];
+  static float _chart_az[CHART_SAMPLES];
+  static uint16_t _chart_head;   // 下一个写入位置
+  static uint16_t _chart_count;  // 已存入的有效样本数
 
-  /**
-   * @brief SPI总线释放（CS拉高）
-   */
-  void busRelease();
+  uint8_t _frame_cnt;            // 帧计数器，用于降频采样
 
-  /**
-   * @brief 绘制记录状态指示灯
-   * @param is_recording - 是否正在记录
-   */
-  void drawStatusLED(bool is_recording);
+  // 内部: 向环形缓冲区追加一组加速度样本
+  void addChartSample(float ax, float ay, float az);
 
-  /**
-   * @brief 更新加速度显示
-   * @param ax, ay, az - 加速度值
-   */
-  void updateAcceleration(float ax, float ay, float az);
-
-  /**
-   * @brief 更新陀螺仪显示
-   */
-  void updateGyroscope(float gx, float gy, float gz);
-
-  /**
-   * @brief 更新欧拉角显示
-   */
-  void updateAttitude(float roll, float pitch, float yaw);
-
-  /**
-   * @brief 更新GPS显示
-   */
-  void updateGPS(const GPSData &gps_data);
-
-  /**
-   * @brief 更新记录状态显示
-   */
-  void updateRecordingState(bool is_recording);
-
-  /**
-   * @brief 更新文件名显示
-   */
-  void updateFileName(const String &filename);
+  // UI绘制子函数 (均绘制到canvas)
+  void drawTitleBar(bool is_recording);
+  void drawColHeaders();
+  void drawDataSection(const IMUData &imu_data);
+  void drawChart();
+  void drawGPSSection(const GPSData &gps_data);
+  void drawStatusBar(const SystemState &sys_state, const String &filename, uint32_t record_count);
+  void drawDivider(int16_t y, uint16_t color);
 };
 
-#endif  // TFT_DISPLAY_H
+#endif

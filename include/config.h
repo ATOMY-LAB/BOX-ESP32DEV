@@ -15,29 +15,42 @@
 #define TFT_CS    5
 #define TFT_RST   4
 #define TFT_DC    2
-// TFT硬件SPI引脚: CLK=18, MOSI=23, MISO=19（与TF卡共用）
 
 // --- TF Card (共用VSPI) ---
 #define SD_CS     15
 
 // --- GPS (UART1) ---
-#define GPS_RX_PIN 32  // ESP32 UART1_RX <-- GPS_TX
-#define GPS_TX_PIN 33  // ESP32 UART1_TX --> GPS_RX
+#define GPS_RX_PIN 32
+#define GPS_TX_PIN 33
 
 // --- LoRa (UART2) ---
-#define LORA_RX_PIN 16  // ESP32 UART2_RX <-- LoRa_TX
-#define LORA_TX_PIN 17  // ESP32 UART2_TX --> LoRa_RX
+#define LORA_RX_PIN 16
+#define LORA_TX_PIN 17
 
 // ====== 通信波特率 ======
 #define BAUD_RATE 115200
-#define GPS_BAUD_RATE 9600        // GPS默认波特率
-#define LORA_BAUD_RATE 9600       // LoRa默认波特率
+#define GPS_BAUD_RATE 9600
+#define LORA_BAUD_RATE 9600
 
 // ====== 采集间隔参数 ======
-#define IMU_READ_INTERVAL 100     // IMU采集间隔(ms)
-#define TFT_REFRESH_INTERVAL 200  // TFT显示刷新间隔(ms)
-#define SD_LOG_INTERVAL 100       // TF卡写入间隔(ms)（与IMU采集同步）
-#define LORA_SEND_INTERVAL 500    // LoRa数据发送间隔(ms)
+#define IMU_READ_INTERVAL 20      // IMU采集间隔(ms) → 50Hz
+#define TFT_REFRESH_INTERVAL 33   // TFT刷新间隔(ms) ~30fps
+#define SD_LOG_INTERVAL 20        // TF卡写入间隔(ms) → 50Hz (与IMU同步)
+#define SD_FLUSH_INTERVAL 1000    // SD卡flush间隔(ms)
+#define LORA_SEND_INTERVAL 500    // LoRa发送间隔(ms)
+
+// ====== SPI速度 ======
+#define TFT_SPI_FREQ  27000000
+#define SD_SPI_FREQ   25000000
+
+// ====== 屏幕尺寸 ======
+#define TFT_WIDTH  160
+#define TFT_HEIGHT 128
+
+// ====== FreeRTOS任务配置 ======
+#define DISPLAY_TASK_STACK  8192
+#define DISPLAY_TASK_PRIO   1
+#define DISPLAY_TASK_CORE   0      // 显示任务运行在Core 0
 
 // ====== IMU (JY901) 寄存器地址 ======
 #define AX_ADDR 0x34
@@ -50,8 +63,14 @@
 #define PITCH_ADDR 0x3E
 #define YAW_ADDR 0x3F
 
+// ====== IMU缩放常数 ======
+#define IMU_ACC_SCALE  (16.0f * 9.8f / 32768.0f)
+#define IMU_GYRO_SCALE (2000.0f / 32768.0f)
+#define IMU_ANGLE_SCALE (180.0f / 32768.0f)
+#define GPS_FIXED_SCALE 10000000
+
 // ====== GCJ02 坐标转换常数 ======
 #define EARTH_RADIUS_A 6378245.0
 #define EARTH_ECCENTRICITY 0.00669342162296594323
 
-#endif  // CONFIG_H
+#endif

@@ -4,10 +4,11 @@
 bool GPSModule::begin() {
   GPS_Serial.begin(GPS_BAUD_RATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   gps_data.is_fixed = false;
+  gps_data.lat_dir = 'N';
+  gps_data.lon_dir = 'E';
   buffer_index = 0;
   is_gga_valid = false;
   memset(nmea_buffer, 0, sizeof(nmea_buffer));
-  
   Serial.println("[GPS] Init Success");
   return true;
 }
@@ -15,26 +16,27 @@ bool GPSModule::begin() {
 void GPSModule::processSerialData() {
   while (GPS_Serial.available() > 0) {
     char ch = GPS_Serial.read();
-    
+
     if (ch == '\r' || ch == '\n') {
       if (buffer_index > 0) {
         nmea_buffer[buffer_index] = '\0';
-        String nmeaStr = String(nmea_buffer);
-        
-        if (nmeaStr.startsWith("$GPGGA") || nmeaStr.startsWith("$BDGGA") || nmeaStr.startsWith("$GNGGA")) {
+
+        // 直接用strncmp比较前缀，避免String分配
+        if (strncmp(nmea_buffer, "$GPGGA", 6) == 0 ||
+            strncmp(nmea_buffer, "$BDGGA", 6) == 0 ||
+            strncmp(nmea_buffer, "$GNGGA", 6) == 0) {
           is_gga_valid = true;
-          parseGGA(nmeaStr);
+          parseGGA(nmea_buffer);
         }
-        
+
         if (is_gga_valid && gps_data.is_fixed) {
           is_gga_valid = false;
         }
-        
+
         buffer_index = 0;
-        memset(nmea_buffer, 0, sizeof(nmea_buffer));
       }
     } else {
-      if (buffer_index < sizeof(nmea_buffer) - 1) {
+      if (buffer_index < (int)sizeof(nmea_buffer) - 1) {
         nmea_buffer[buffer_index++] = ch;
       }
     }
@@ -49,24 +51,35 @@ bool GPSModule::isFixed() const {
   return gps_data.is_fixed;
 }
 
-void GPSModule::parseGGA(const String &ggaStr) {
-  // GGA格式: $GPGGA,hhmmss.ss,lat,N/S,lon,E/W,quality,...
-  int comma1 = ggaStr.indexOf(',', 7);
-  int comma2 = ggaStr.indexOf(',', comma1 + 1);
-  int comma3 = ggaStr.indexOf(',', comma2 + 1);
-  int comma4 = ggaStr.indexOf(',', comma3 + 1);
+int GPSModule::findComma(const char *str, int n) {
+  int count = 0;
+  for (int i = 0; str[i] != '\0'; i++) {
+    if (str[i] == ',') {
+      count++;
+      if (count == n) return i;
+    }
+  }
+  return -1;
+}
 
-  String latDDM = ggaStr.substring(comma1 + 1, comma2);
-  String latDir = ggaStr.substring(comma2 + 1, comma3);
-  String lonDDM = ggaStr.substring(comma3 + 1, comma4);
-  int comma5 = ggaStr.indexOf(',', comma4 + 1);
-  String lonDir = ggaStr.substring(comma4 + 1, comma5);
+void GPSModule::parseGGA(const char *gga_str) {
+  // GGA: $GPGGA,time,lat,N/S,lon,E/W,quality,...
+  // 找到各逗号位置
+  int c1 = findComma(gga_str, 2);  // lat start
+  int c2 = findComma(gga_str, 3);  // N/S
+  int c3 = findComma(gga_str, 4);  // lon start
+  int c4 = findComma(gga_str, 5);  // E/W
+  int c5 = findComma(gga_str, 6);  // quality
 
-  double wgs_lat = ddm2dd(latDDM);
-  if (latDir == "S") wgs_lat = -wgs_lat;
-  
-  double wgs_lon = ddm2dd(lonDDM);
-  if (lonDir == "W") wgs_lon = -wgs_lon;
+  if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0) return;
+
+  double wgs_lat = ddm2dd(gga_str + c1 + 1, c2 - c1 - 1);
+  char latDir = gga_str[c2 + 1];
+  if (latDir == 'S') wgs_lat = -wgs_lat;
+
+  double wgs_lon = ddm2dd(gga_str + c3 + 1, c4 - c3 - 1);
+  char lonDir = gga_str[c4 + 1];
+  if (lonDir == 'W') wgs_lon = -wgs_lon;
 
   gps_data.wgs84_lat = wgs_lat;
   gps_data.wgs84_lon = wgs_lon;
@@ -78,15 +91,21 @@ void GPSModule::parseGGA(const String &ggaStr) {
   gps_data.is_fixed = (wgs_lat != 0.0 && wgs_lon != 0.0);
 }
 
-double GPSModule::ddm2dd(const String &ddmStr) {
-  if (ddmStr.isEmpty()) return 0.0;
-  double ddm = atof(ddmStr.c_str());
+double GPSModule::ddm2dd(const char *ddm_str, int len) {
+  if (len <= 0) return 0.0;
+  // 用固定缓冲区做atof，避免修改原始缓冲区
+  char tmp[20];
+  int copyLen = (len < 19) ? len : 19;
+  memcpy(tmp, ddm_str, copyLen);
+  tmp[copyLen] = '\0';
+
+  double ddm = atof(tmp);
   int deg = (int)(ddm / 100);
   double min = ddm - deg * 100;
   return deg + min / 60.0;
 }
 
-void GPSModule::wgs84ToGcj02(double wgs_lat, double wgs_lon, 
+void GPSModule::wgs84ToGcj02(double wgs_lat, double wgs_lon,
                               double &gcj_lat, double &gcj_lon) {
   if (outOfChina(wgs_lat, wgs_lon)) {
     gcj_lat = wgs_lat;
@@ -107,9 +126,7 @@ void GPSModule::wgs84ToGcj02(double wgs_lat, double wgs_lon,
 }
 
 bool GPSModule::outOfChina(double lat, double lon) {
-  if (lon < 72.004 || lon > 137.8347 || lat < 0.8293 || lat > 55.8271)
-    return true;
-  return false;
+  return (lon < 72.004 || lon > 137.8347 || lat < 0.8293 || lat > 55.8271);
 }
 
 double GPSModule::transformLat(double x, double y) {

@@ -23,13 +23,13 @@ void LoRaCommunication::sendData(const IMUData &imu_data, const GPSData &gps_dat
   if (gps_data.is_fixed) {
     // ✅ 使用固定宽度格式确保字符数量一致
     snprintf(loraBuffer, sizeof(loraBuffer),
-      "TS:%10lu,AX:%7.2f,AY:%7.2f,AZ:%7.2f,GX:%7.2f,GY:%7.2f,GZ:%7.2f,ROLL:%7.2f,PITCH:%7.2f,YAW:%7.2f,LAT:%11.8f,LAT_DIR:%s,LON:%11.8f,LON_DIR:%s\r\n",
+      "TS:%10lu,AX:%7.2f,AY:%7.2f,AZ:%7.2f,GX:%7.2f,GY:%7.2f,GZ:%7.2f,ROLL:%7.2f,PITCH:%7.2f,YAW:%7.2f,LAT:%11.8f,LAT_DIR:%c,LON:%11.8f,LON_DIR:%c\r\n",
       imu_data.timestamp,
       imu_data.ax, imu_data.ay, imu_data.az,
       imu_data.gx, imu_data.gy, imu_data.gz,
       imu_data.roll, imu_data.pitch, imu_data.yaw,
-      gps_data.gcj02_lat, gps_data.lat_dir.c_str(),
-      gps_data.gcj02_lon, gps_data.lon_dir.c_str()
+      gps_data.gcj02_lat, gps_data.lat_dir,
+      gps_data.gcj02_lon, gps_data.lon_dir
     );
   } else {
     snprintf(loraBuffer, sizeof(loraBuffer),
