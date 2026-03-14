@@ -17,6 +17,7 @@
 #define C_GPS_NOFIX   0x8410   // 灰色
 #define C_REC_ON      0x07E0   // 亮绿
 #define C_REC_OFF     0x8410   // 灰色
+#define C_NO_SD       0xFD20   // 橙色 (255,168,0) — 无SD卡状态
 #define C_STATUS_BG   0x10A2   // 深灰底色
 #define C_WHITE       0xFFFF
 #define C_RED         0xF800
@@ -325,13 +326,18 @@ void TFTDisplay::drawStatusBar(const SystemState &sys_state,
   canvas->fillRect(0, STATUS_Y, TFT_WIDTH, TFT_HEIGHT - STATUS_Y, C_STATUS_BG);
   canvas->setTextSize(1);
 
-  // 录制状态圆点
+  // 录制状态圆点 + 状态文字 (三态: 录制中 / 停止 / 无卡)
   if (sys_state.is_recording) {
     bool blink = (millis() / 500) % 2;
     if (blink) canvas->fillCircle(8, STATUS_Y + 6, 3, C_RED);
     canvas->setTextColor(C_REC_ON);
     canvas->setCursor(14, STATUS_Y + 2);
     canvas->print("REC");
+  } else if (!sys_state.is_card_ready) {
+    canvas->fillCircle(8, STATUS_Y + 6, 3, C_NO_SD);
+    canvas->setTextColor(C_NO_SD);
+    canvas->setCursor(14, STATUS_Y + 2);
+    canvas->print("NO SD");
   } else {
     canvas->fillCircle(8, STATUS_Y + 6, 3, C_REC_OFF);
     canvas->setTextColor(C_REC_OFF);

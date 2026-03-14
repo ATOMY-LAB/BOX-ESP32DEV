@@ -49,7 +49,8 @@ static SystemState sys_state = {false, false, false};
 static unsigned long lastSDLog    = 0;
 static unsigned long lastSDFlush  = 0;   // flushData (5Hz)
 static unsigned long lastSDMeta   = 0;   // flush/FAT更新 (0.2Hz)
-static unsigned long lastSDCheck  = 0;
+static unsigned long lastSDCheck  = 0;   // 有卡时拔出检测 (1Hz)
+static unsigned long lastSDReinit = 0;   // 无卡时插卡重试 (0.2Hz, SD.begin()无卡阻塞慢)
 static unsigned long lastLoRaSend = 0;
 
 // 录制状态切换检测 (用于停止时立即flush，确保断电安全)
@@ -62,6 +63,10 @@ static inline void spiUnlock() { xSemaphoreGive(spiMutex); }
 // ====== LoRa命令回调 ======
 void onLoRaCommand(char cmd) {
   if (cmd == '1') {
+    if (!sys_state.is_card_ready) {
+      Serial.println("[System] Recording start IGNORED: no SD card");
+      return;
+    }
     sys_state.is_recording = true;
     Serial.println("[System] Recording started");
   } else if (cmd == '2') {
@@ -252,6 +257,20 @@ void setup() {
   Serial.println("========================\n");
 }
 
+// ====== SD写入错误统一处理 (写入失败视同拔卡，触发热插拔恢复流程) ======
+static void handleSDWriteError() {
+  Serial.println("[SD] Write error! Treating as card removal, stopping recording.");
+  sys_state.is_recording  = false;
+  sys_state.is_card_ready = false;
+  spiLock();
+  sd_storage.onCardRemoved();   // 关闭文件句柄, SD.end(), 清缓冲
+  spiUnlock();
+  xSemaphoreTake(dataMutex, portMAX_DELAY);
+  shared_sys_state = sys_state;
+  shared_filename  = "";
+  xSemaphoreGive(dataMutex);
+}
+
 // ====== 主循环 (Core 1 loopTask: GPS/LoRa/SD/热插拔) ======
 // IMU采集已移至独立的 imuTask (50Hz精确调度)
 // 本循环只处理串口数据流、SD写入、LoRa通信、热插拔检测
@@ -274,9 +293,10 @@ void loop() {
   if (sys_state.is_recording && sys_state.is_card_ready &&
       (now - lastSDFlush >= SD_FLUSH_INTERVAL)) {
     spiLock();
-    sd_storage.flushData();
+    bool ok = sd_storage.flushData();
     spiUnlock();
     lastSDFlush = now;
+    if (!ok) handleSDWriteError();
   }
 
   // 4. SD元数据FAT更新 (0.2Hz) — FAT/目录项落盘, 10~30ms SPI, 每5s一次
@@ -284,17 +304,22 @@ void loop() {
   if (sys_state.is_recording && sys_state.is_card_ready &&
       (now - lastSDMeta >= SD_META_FLUSH_INTERVAL)) {
     spiLock();
-    sd_storage.flush();
+    bool ok = sd_storage.flush();
     spiUnlock();
     lastSDMeta = now;
+    if (!ok) handleSDWriteError();
   }
 
   // 5. 录制停止时立即完整flush (确保最后一批数据落盘)
   if (prev_recording && !sys_state.is_recording && sys_state.is_card_ready) {
     spiLock();
-    sd_storage.flush();
+    bool ok = sd_storage.flush();
     spiUnlock();
-    Serial.println("[SD] Stop-flush done");
+    if (ok) {
+      Serial.println("[SD] Stop-flush done");
+    } else {
+      handleSDWriteError();
+    }
   }
   prev_recording = sys_state.is_recording;
 
@@ -304,48 +329,49 @@ void loop() {
     lastLoRaSend = now;
   }
 
-  // 7. SD卡热插拔检测 (1Hz)
-  if (now - lastSDCheck >= SD_CHECK_INTERVAL) {
+  // 7a. SD卡拔出检测 (有卡时, 1Hz) — cardType()只需一次SPI查询, 非常快
+  if (sys_state.is_card_ready && (now - lastSDCheck >= SD_CHECK_INTERVAL)) {
     lastSDCheck = now;
 
-    if (sys_state.is_card_ready) {
-      // --- 拔卡检测: 检查SD卡是否仍可访问 ---
+    spiLock();
+    bool still_present = (SD.cardType() != CARD_NONE);
+    spiUnlock();
+
+    if (!still_present) {
+      Serial.println("[SD] Card removed! Stopping recording.");
+      sys_state.is_recording  = false;
+      sys_state.is_card_ready = false;
+
       spiLock();
-      bool still_present = (SD.cardType() != CARD_NONE);
+      sd_storage.onCardRemoved();   // 关闭文件, SD.end(), 清内存缓冲
       spiUnlock();
 
-      if (!still_present) {
-        Serial.println("[SD] Card removed! Stopping recording.");
-        sys_state.is_recording  = false;
-        sys_state.is_card_ready = false;
+      xSemaphoreTake(dataMutex, portMAX_DELAY);
+      shared_sys_state = sys_state;
+      shared_filename  = "";
+      xSemaphoreGive(dataMutex);
 
-        spiLock();
-        sd_storage.onCardRemoved();   // 关闭文件, SD.end(), 清内存缓冲
-        spiUnlock();
+      lastSDReinit = now;  // 从这一刻开始计5s, 避免紧接着就重试
+    }
+  }
 
-        // 同步状态到显示任务
-        xSemaphoreTake(dataMutex, portMAX_DELAY);
-        shared_sys_state = sys_state;
-        shared_filename  = "";
-        xSemaphoreGive(dataMutex);
-      }
+  // 7b. SD卡插入检测 (无卡时, 0.2Hz) — SD.begin()无卡时需100ms+总线超时, 降频至5s一次
+  //     避免每秒抢占spiMutex导致displayTask丢帧卡顿
+  if (!sys_state.is_card_ready && (now - lastSDReinit >= SD_REINIT_INTERVAL)) {
+    lastSDReinit = now;
 
-    } else {
-      // --- 插卡检测: 尝试单次重新初始化 ---
-      spiLock();
-      bool ok = sd_storage.tryReinit();
-      spiUnlock();
+    spiLock();
+    bool ok = sd_storage.tryReinit();
+    spiUnlock();
 
-      if (ok) {
-        sys_state.is_card_ready = true;
-        // 插卡后不自动开始录制，需通过LoRa命令显式启动
+    if (ok) {
+      sys_state.is_card_ready = true;
+      // 插卡后不自动开始录制，需通过LoRa命令显式启动
 
-        // 同步状态到显示任务
-        xSemaphoreTake(dataMutex, portMAX_DELAY);
-        shared_sys_state = sys_state;
-        shared_filename  = sd_storage.getFileName();
-        xSemaphoreGive(dataMutex);
-      }
+      xSemaphoreTake(dataMutex, portMAX_DELAY);
+      shared_sys_state = sys_state;
+      shared_filename  = sd_storage.getFileName();
+      xSemaphoreGive(dataMutex);
     }
   }
 }

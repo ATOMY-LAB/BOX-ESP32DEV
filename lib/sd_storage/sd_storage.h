@@ -40,9 +40,8 @@ class SDStorage {
 public:
   bool begin();                  // 启动时初始化 (含3次重试)
   bool logData(const IMUData &imu_data, const GPSData &gps_data);
-  void flushData();              // csv_buf→FATFS层, 快速 (需在spiLock内调用, 5Hz)
-  void flush();                  // flushData() + FAT更新, 慢 (需在spiLock内调用, 0.2Hz)
-  void stopRecording();          // flush() + 关闭文件句柄
+  bool flushData();              // csv_buf→FATFS层, 快速 (需在spiLock内调用, 5Hz); 写入失败返回false
+  bool flush();                  // flushData() + FAT更新, 慢 (需在spiLock内调用, 0.2Hz); 写入失败返回false
   void onCardRemoved();          // 拔卡处理 (需在spiLock内调用)
   bool tryReinit();              // 插卡重新初始化, 单次无延迟 (需在spiLock内调用)
   const String& getFileName() const;

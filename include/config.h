@@ -40,7 +40,8 @@
                                   // flushData(): csv_buf→FATFS内部缓冲, 通常0~5ms SPI
 #define SD_META_FLUSH_INTERVAL 5000 // FAT元数据更新间隔(ms) → 0.2Hz
                                   // flush(): 更新FAT/目录项, 10~30ms SPI, 每5s一次不影响显示
-#define SD_CHECK_INTERVAL  1000   // SD卡热插拔检测间隔(ms)
+#define SD_CHECK_INTERVAL  1000   // SD卡热插拔检测间隔(ms) — 有卡时检测拔出, 1Hz
+#define SD_REINIT_INTERVAL 5000   // SD卡无卡重新初始化间隔(ms) — SD.begin()无卡时阻塞总线约100ms+, 降频至0.2Hz避免卡顿
 #define LORA_SEND_INTERVAL  500   // LoRa发送间隔(ms)
 
 // ====== SPI速度 ======
