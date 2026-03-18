@@ -36,9 +36,10 @@ typedef void (*LoRaCommandCallback)(char cmd);
  * - 实时接收采集盒子的IMU和GPS数据
  * - 无线数据链路，支持多个接收器
  * 
- * 发送数据格式 (单行文本):
- *   TS:12345,AX:9.80,AY:1.23,ROLL:0.45,PITCH:2.34,LAT:31.2345,LON:120.5678\r\n
- * (GPS无定位时: LAT:NO_FIX,LON:NO_FIX)
+ * 新LoRa协议格式:
+ *   发送: $LORA,DEV2,DATA,TS:12345|AX:9.80|AY:1.23|ROLL:0.45|PITCH:2.34|LAT:31.2345|LON:120.5678\n
+ *   接收: $LORA,DEV2,CMD,START\n 或 $LORA,DEV2,CMD,STOP\n
+ *   (设备ID从config.h的DEVICE_ID读取，支持多设备过滤)
  */
 class LoRaCommunication {
 public:
@@ -87,6 +88,17 @@ public:
 
 private:
   LoRaCommandCallback command_callback;
+  static const uint16_t RX_BUFFER_SIZE = 256;
+  char rx_buffer[RX_BUFFER_SIZE];
+  uint16_t rx_buffer_index;
+
+  /**
+   * @brief 处理接收到的LoRa包
+   * 新协议: $LORA,设备ID,CMD,内容\n
+   * 
+   * @param packet - 完整的接收包
+   */
+  void processLoRaPacket(const String &packet);
 
   /**
    * @brief 处理接收到的命令

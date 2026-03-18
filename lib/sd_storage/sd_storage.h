@@ -3,8 +3,7 @@
 
 #include <Arduino.h>
 #include <SPI.h>
-#include <FS.h>
-#include <SD.h>
+#include "SdFat.h"
 #include "sensors.h"
 #include "config.h"
 

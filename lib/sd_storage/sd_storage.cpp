@@ -1,23 +1,25 @@
 #include "sd_storage.h"
 
+// 全局SdFat对象
+SdFs sd;
+
 bool SDStorage::begin() {
   Serial.print("[SD] Init starting...");
   
   // ESP32 SD卡初始化 - 使用 SPI 模式
   // 确保SD卡初始化成功（重试机制）
   for (int i = 0; i < 3; i++) {
-    // 对于 ESP32，使用简化的 SD.begin() 调用
-    // 也可以指定时钟频率：SD.begin(SD_CS, SPI, 4000000)
-    if (SD.begin(SD_CS, SPI, 25000000)) {
+    // 使用SdFat库的初始化方式
+    if (sd.begin(SdSpiConfig(SD_CS, DEDICATED_SPI, 25000000))) {
       Serial.println("Success!");
       data_filename = findNextFileName();
       Serial.print("[SD] Log File: ");
       Serial.println(data_filename);
 
       // 创建文件并写入表头
-      File dataFile = SD.open(data_filename.c_str(), FILE_WRITE);
+      FsFile dataFile = sd.open(data_filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC);
       if (dataFile) {
-        if (dataFile.size() == 0) {
+        if (dataFile.fileSize() == 0) {
           size_t header_written = dataFile.println("Timestamp(ms),Ax(m/s2),Ay(m/s2),Az(m/s2),Gx(deg/s),Gy(deg/s),Gz(deg/s),"
                           "Roll(deg),Pitch(deg),Yaw(deg),WGS84_Lat(deg),WGS84_Lon(deg),"
                           "GCJ02_Lat(deg),GCJ02_Lon(deg),Lat_Dir,Lon_Dir");
@@ -57,15 +59,15 @@ bool SDStorage::logData(const IMUData &imu_data, const GPSData &gps_data) {
     return false;
   }
 
-  // ✅ 关键修复：使用FILE_APPEND确保追加而不是覆盖
-  File dataFile = SD.open(data_filename.c_str(), FILE_APPEND);
+  // ✅ 使用O_WRONLY | O_CREAT | O_APPEND确保追加而不是覆盖
+  FsFile dataFile = sd.open(data_filename.c_str(), O_WRONLY | O_CREAT | O_APPEND);
   if (!dataFile) {
     Serial.println("[SD] ERROR: File open failed!");
     return false;
   }
 
   // 记录写入前的文件大小
-  size_t size_before = dataFile.size();
+  size_t size_before = dataFile.fileSize();
 
   String csvLine = formatCSVLine(imu_data, gps_data);
   size_t written = dataFile.println(csvLine);
@@ -81,7 +83,7 @@ bool SDStorage::logData(const IMUData &imu_data, const GPSData &gps_data) {
   delay(5);  // 等待写入完成
   
   // 验证写入
-  size_t size_after = dataFile.size();
+  size_t size_after = dataFile.fileSize();
   dataFile.close();
   
   // 仅在出错时输出，正常只静默处理
@@ -102,7 +104,7 @@ String SDStorage::findNextFileName() {
   
   while (true) {
     snprintf(fileName, sizeof(fileName), "/%d.csv", fileIndex);
-    if (!SD.exists(fileName)) {
+    if (!sd.exists(fileName)) {
       return String(fileName);
     }
     fileIndex++;
@@ -143,12 +145,12 @@ void SDStorage::checkFileStatus() {
     return;
   }
   
-  File check = SD.open(data_filename.c_str());
+  FsFile check = sd.open(data_filename.c_str(), O_RDONLY);
   if (check) {
     Serial.print("[SD] File: ");
     Serial.print(data_filename);
     Serial.print(" | Size: ");
-    Serial.print(check.size());
+    Serial.print(check.fileSize());
     Serial.println(" bytes");
     check.close();
   } else {

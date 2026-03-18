@@ -50,8 +50,8 @@
 #define PITCH_ADDR 0x3E
 #define YAW_ADDR 0x3F
 
-// ====== GCJ02 坐标转换常数 ======
-#define EARTH_RADIUS_A 6378245.0
-#define EARTH_ECCENTRICITY 0.00669342162296594323
+// ====== LoRa协议配置 ======
+#define DEVICE_ID "DEV1"           // 本设备ID（需要烧录两个设备时修改为DEV1/DEV2）
+#define PROTOCOL_HEADER "$LORA"    // LoRa包头
 
 #endif  // CONFIG_H

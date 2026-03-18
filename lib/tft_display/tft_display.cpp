@@ -32,6 +32,12 @@ void TFTDisplay::drawStaticUI() {
   tft.fillRect(0, 0, 160, 16, BLUE);
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
+  
+  // 左上角显示设备编号
+  tft.setCursor(2, 4);
+  tft.print(DEVICE_ID);
+  
+  // 中心显示标题
   int titleX = (160 - 8 * 11) / 2;
   tft.setCursor(titleX, 4);
   tft.print("DragonBoat Box");
